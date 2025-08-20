@@ -9,15 +9,16 @@ from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoic
 from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
 from semantic_kernel.contents.chat_history import ChatHistory
 from semantic_kernel.functions.kernel_arguments import KernelArguments
-from semantic_kernel.contents import ChatMessageContent, FunctionCallContent, FunctionResultContent
+from semantic_kernel.contents import ChatMessageContent, StreamingChatMessageContent, FunctionCallContent, FunctionResultContent
 
 from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import (
     AzureChatPromptExecutionSettings,
 )
 
-from semantic_kernel.connectors.mcp import MCPStreamableHttpPlugin
+from semantic_kernel.connectors.mcp import MCPStreamableHttpPlugin, MCPSsePlugin
 
 import logging
+import json
 
 
 
@@ -32,7 +33,7 @@ async def main():
     )
     kernel.add_service(chat_completion)
 
-    loglevel = logging.ERROR
+    loglevel = logging.DEBUG  # Set the desired logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 
     # Set up logging to see detailed information
     setup_logging()
@@ -50,14 +51,23 @@ async def main():
         )
 
     
-    ff_server =  MCPStreamableHttpPlugin(
+    ff_server = MCPStreamableHttpPlugin(
         name="ff_tools",
         url="http://192.168.86.103:8000/mcp",
     )
-    await ff_server.connect()  
-
+    await ff_server.connect()
     kernel.add_plugin(ff_server)
-    print("✅ MCP plugin added to kernel")
+
+    
+    sql_server = MCPSsePlugin(
+        name="sql_tools",
+        url="https://sql-mcp-demo.azurewebsites.us/sse",
+    )
+    await sql_server.connect()
+    kernel.add_plugin(sql_server)
+
+
+    print("✅ MCP plugins added to kernel")
 
     # Enable planning
     execution_settings = AzureChatPromptExecutionSettings()
@@ -65,6 +75,9 @@ async def main():
 
     # Create a history of the conversation
     history = ChatHistory()
+
+    history.add_system_message("Answer like a pirate")
+
 
     print("🤖 Assistant ready! You can ask me to use any of the MCP tools listed above.")
     print("💡 Example: 'Can you help me with fantasy football data?'")
@@ -83,33 +96,13 @@ async def main():
         # Add user input to the history
         history.add_user_message(userInput)
 
-        # Try streaming responses if the client supports it; otherwise fall back
-        thread = None
-
-                # This callback function will be called for each intermediate message,
-        # which will allow one to handle FunctionCallContent and FunctionResultContent.
-        # If the callback is not provided, the agent will return the final response
-        # with no intermediate tool call steps.
-        async def handle_streaming_intermediate_steps(message: ChatMessageContent) -> None:
-            print("\n--- Intermediate Step ---")
-            print(message)
-            for item in message.items or []:
-                if isinstance(item, FunctionResultContent):
-                    print(f"Function Result:> {item.result} for function: {item.name}")
-                elif isinstance(item, FunctionCallContent):
-                    print(f"Function Call:> {item.name} with arguments: {item.arguments}")
-                else:
-                    print(f"{item}")
-
         # Accumulate content so we can add a single message to history at the end
-        full_response = ""
-
-        # Enforce streaming-only mode: require invoke_stream on the client
-        if not hasattr(chat_completion, "get_streaming_chat_message_contents"):
-            raise RuntimeError(
-                "The configured chat_completion client does not support streaming (invoke_stream).\n"
-                "This script is running in streaming-only mode. Use a streaming-capable client."
-            )
+        full_response = {
+            "thoughts": [],
+            "tool_calls": [],
+            "messages": [],
+            "raw_chunks": [],
+        }
 
         thread = None
 
@@ -117,7 +110,6 @@ async def main():
             response = chat_completion.get_streaming_chat_message_content(
                 messages=userInput,
                 thread=thread,
-                on_intermediate_message=handle_streaming_intermediate_steps,
                 chat_history=history,
                 settings=execution_settings,
                 kernel=kernel,
@@ -136,17 +128,31 @@ async def main():
                         tools = False
                         message = False
                         print("\n--- Agent Thoughts ---")
-                    print(chunk.inner_content['message'].thinking, end="")
-
+                    thinking = chunk.inner_content['message'].thinking
+                    # preserve print behavior
+                    print(thinking, end="")
+                    # accumulate
+                    try:
+                        full_response['thoughts'].append(str(thinking))
+                    except Exception:
+                        full_response['thoughts'].append(repr(thinking))
                 # tools
                 elif chunk.inner_content is not None and chunk.inner_content.get('message') is not None and chunk.inner_content['message'].tool_calls is not None:
                     if tools == False:
+                        tools = True
                         message = False
                         thoughts = False
                         print("\n--- Agent Tools ---")
-                    print(chunk.inner_content['message'].tool_calls)
+                    tool_calls = chunk.inner_content['message'].tool_calls
+                    for tool in tool_calls:
+                        print(f"Tool: {tool.function.name}")
+                        print(f"Arguments: {tool.function.arguments}")
+                        # accumulate
+                        try:
+                            full_response['tool_calls'].append({tool.function.name: tool.function.arguments})
+                        except Exception:
+                            full_response['tool_calls'].append({"generic": str(tool_calls)})
                 # messages
-
                 else:
                     if message == False:
                         message = True
@@ -154,24 +160,51 @@ async def main():
                         tools = False
                         print("\n--- Agent Message ---")
                     print(chunk, end="")
+                    # accumulate a best-effort message representation
+                    try:
+                        if chunk.inner_content is not None:
+                            full_response['messages'].append(str(chunk.inner_content))
+                        else:
+                            full_response['messages'].append(str(chunk))
+                    except Exception:
+                        full_response['messages'].append(repr(chunk))
+                    # keep raw chunk text too
+                    try:
+                        full_response['raw_chunks'].append(str(chunk))
+                    except Exception:
+                        full_response['raw_chunks'].append(repr(chunk))
 
             print()
             # Newline after stream finishes
             print()
 
-            if full_response:
-                history.add_message(full_response)
-        finally:
-            # Clean up the thread on the remote service if provided
-            if thread:
+            # Reconstruct a single assistant message from the accumulated pieces
+            assistant_parts = []
+            if full_response.get('thoughts'):
+                assistant_parts.append("\n".join(full_response['thoughts']))
+            if full_response.get('messages'):
+                assistant_parts.append("\n".join(full_response['messages']))
+            if full_response.get('tool_calls'):
+                # represent tool calls as a stringified list/dict
+                assistant_parts.append(str(full_response['tool_calls']))
+
+            assistant_text = "\n\n".join([p for p in assistant_parts if p]).strip()
+            if assistant_text:
+                # Try to add as an assistant message; fall back to system message if method isn't available
                 try:
-                    await thread.delete()
+                    history.add_assistant_message(assistant_text)
                 except Exception:
-                    # Best-effort cleanup; ignore errors
-                    pass
+                    history.add_system_message(assistant_text)
+
+        except Exception as e:
+            # Best-effort cleanup; ignore errors
+            logging.exception(f"The chat message processing failed. {e}")
     await ff_server.close()
+    await sql_server.close()
+    return full_response
 
 
 # Run the main function
 if __name__ == "__main__":
-    asyncio.run(main())
+    resp = asyncio.run(main())
+    print(json.dumps(resp, indent=2, ensure_ascii=False))
