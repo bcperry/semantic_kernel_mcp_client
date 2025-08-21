@@ -1,0 +1,16 @@
+{
+	"ai_model_id": "gpt-oss:20b",
+	"host": "http://ollama.home",
+	"system_message": "Answer like a pirate",
+	"servers": {
+		"ff_tools": {
+			"url": "http://192.168.86.103:8000/mcp",
+			"type": "http"
+		},
+		"sql_tools": {
+			"url": "https://somesseserver.azurewebsites.us/sse",
+			"type": "http"
+		}
+	},
+	"inputs": []
+}
