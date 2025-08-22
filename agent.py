@@ -148,6 +148,7 @@ class Agent:
         }
 
         try:
+            logging.info(f"Running agent with user input: {userInput}")
             for server in self.mcp_server_objects:
                 await server.connect()
             response = self.chat_completion.get_streaming_chat_message_content(
@@ -300,8 +301,9 @@ class Agent:
         """Setup the chat completion service based on agent definition."""
         try:
             if "env_file_path" in agent_definition:
+                logging.info(f"Loading environment variables from {agent_definition['env_file_path']}")
                 # Load environment variables from .env file
-                load_dotenv()
+                load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), agent_definition['env_file_path']))
 
                 # Override agent_definition with environment variables if they exist
                 if os.getenv("AZURE_OPENAI_ENDPOINT"):
@@ -311,9 +313,12 @@ class Agent:
                 if os.getenv("AZURE_OPENAI_MODEL"):
                     agent_definition["deployment_name"] = os.getenv("AZURE_OPENAI_MODEL")
                 if os.getenv("OPENAI_API_VERSION"):
-                    agent_definition["api_version"] = os.getenv("OPENAI_API_VERSION")
+                    agent_definition["api_version"] = os.getenv("OPENAI_API_VERSION")\
+                    
+                logging.info(f"Azure OpenAI endpoint: {agent_definition.get('endpoint', None)}")
             if "azure" in agent_definition.get("endpoint", ""):
                 logging.info("Configuring Azure OpenAI Chat Completion")
+                
                 self.chat_completion = AzureChatCompletion(
                     service_id=agent_definition.get("service_id", None),
                     api_key=agent_definition.get("api_key", None),
@@ -337,6 +342,7 @@ class Agent:
                     ai_model_id=agent_definition.get("deployment_name", "gpt-oss:20b"),
                     host=agent_definition.get("endpoint", "http://localhost:11434"), # Default to local Ollama Instance
                 )
+            logging.info(f"Chat completion service configured: {self.chat_completion.__class__.__name__}")
         except Exception as e:
             logging.error(f"Failed to setup chat completion: {e}")
 
