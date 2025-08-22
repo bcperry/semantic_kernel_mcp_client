@@ -135,7 +135,7 @@ class Agent:
         await inst._setup_mcp_plugins(servers_to_setup)
         return inst
 
-    async def run_agent(self, userInput: str):
+    async def run_agent(self, userInput: str, streaming: bool = False):
 
         # Add user input to the history
         self.history.add_user_message(userInput)
@@ -171,8 +171,8 @@ class Agent:
                             message = message + 1
                             thoughts = 0
                             tools = 0
-                            print("\n--- Agent Message ---")
-                        print(chunk.content, end="")
+                            if streaming: yield str("\n--- Agent Message ---")
+                        if streaming: yield str(chunk.content)
                         # accumulate a best-effort message representation
 
                         if chunk.inner_content is not None:
@@ -183,10 +183,10 @@ class Agent:
                     #         thoughts = thoughts + 1
                     #         tools = 0
                     #         message = 0
-                    #         print("\n--- Agent Thoughts ---")
+                    #         if streaming: yield str("\n--- Agent Thoughts ---")
                     #     thinking = chunk.inner_content['message'].thinking
-                    #     # preserve print behavior
-                    #     print(thinking, end="")
+                    #     # preserve if streaming: yield str behavior
+                    #     if streaming: yield str(thinking)
                     #     # accumulate
                     #     try:
                     #         full_response['thoughts'].append(str(thinking))
@@ -199,7 +199,7 @@ class Agent:
                             tools = tools + len(chunk.items)
                             message = 0
                             thoughts = 0
-                            print("\n--- Agent Tools ---")
+                            if streaming: yield str("\n--- Agent Tools ---")
                         tool_calls = chunk.items
                         for tool in tool_calls:
                             if tool.content_type == "function_result":
@@ -223,10 +223,10 @@ class Agent:
                             thoughts = thoughts + 1
                             tools = 0
                             message = 0
-                            print("\n--- Agent Thoughts ---")
+                            if streaming: yield str("\n--- Agent Thoughts ---")
                         thinking = chunk.inner_content['message'].thinking
-                        # preserve print behavior
-                        print(thinking, end="")
+                        # preserve if streaming: yield str behavior
+                        if streaming: yield str(thinking)
                         # accumulate
                         try:
                             full_response['thoughts'].append(str(thinking))
@@ -239,11 +239,11 @@ class Agent:
                             tools = tools + 1
                             message = 0
                             thoughts = 0
-                            print("\n--- Agent Tools ---")
+                            if streaming: yield str("\n--- Agent Tools ---")
                         tool_calls = chunk.inner_content['message'].tool_calls
                         for tool in tool_calls:
-                            print(f"Tool: {tool.function.name}")
-                            print(f"Arguments: {tool.function.arguments}")
+                            if streaming: yield str(f"Tool: {tool.function.name}")
+                            if streaming: yield str(f"Arguments: {tool.function.arguments}")
                             # accumulate
                             try:
                                 full_response['tool_calls'].append({tool.function.name: tool.function.arguments})
@@ -255,8 +255,8 @@ class Agent:
                             message = message + 1
                             thoughts = 0
                             tools = 0
-                            print("\n--- Agent Message ---")
-                        print(chunk, end="")
+                            if streaming: yield str("\n--- Agent Message ---")
+                        if streaming: yield str(chunk)
                         # accumulate a best-effort message representation
 
                         if chunk.inner_content is not None:
@@ -295,7 +295,9 @@ class Agent:
             # Best-effort cleanup; ignore errors
             logging.exception(f"The chat message processing failed. {e}")
 
-        return full_response
+        if not streaming:
+            yield str(full_response)
+            # return full_response
 
     def _setup_chat_completion(self, agent_definition):
         """Setup the chat completion service based on agent definition."""
@@ -350,4 +352,3 @@ class Agent:
 # Run the main function
 if __name__ == "__main__":
     resp = asyncio.run(Agent())
-    print(json.dumps(resp, indent=2, ensure_ascii=False))
