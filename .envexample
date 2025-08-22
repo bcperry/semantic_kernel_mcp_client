@@ -1,0 +1,5 @@
+# Azure OpenAI Configuration
+AZURE_OPENAI_ENDPOINT=https://XXXX.openai.azure.us/
+AZURE_OPENAI_API_KEY=XXXXX
+AZURE_OPENAI_MODEL=gpt-4o-mini
+OPENAI_API_VERSION=2024-02-15-preview
