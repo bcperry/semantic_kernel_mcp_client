@@ -117,7 +117,8 @@ class Agent:
                     logging.info(f"Successfully connected to MCP server: {server_name} ({server_type})")
                     await mcp_server.close()
                 except Exception as e:
-                    logging.error(f"Error connecting to {server_name} MCP server: {e}")
+                    logging.info(f"Error connecting to {server_name} MCP server.")
+                    logging.error(f"Failed to connect to MCP server {server_name}: {e}")
 
 
     @classmethod
